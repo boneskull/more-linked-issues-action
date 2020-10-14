@@ -1,0 +1,24 @@
+name: 'More Linked Issues'
+description: 'Link pull requests to issues via commit messages and titles'
+inputs:
+  use-commit-message:
+    description: 'If "false", do not use linking keywords in commit messages'
+    required: false
+    default: 'true'
+  use-pr-title:
+    description: 'If "false", do not use linking keywords in PR titles'
+    required: false
+    default: 'true'
+  keywords:
+    description: 'Comma-delimited list of linking keywords to use'
+    required: false
+    default: 'close,closes,closed,fix,fixes,fixed,resolve,resolves,resolved'
+  github-token:
+    description: 'Secret GitHub token'
+    required: true
+outputs:
+  links:
+    description: 'Linked issue text'
+runs:
+  using: 'node12'
+  main: 'src/index.js'
