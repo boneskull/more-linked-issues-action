@@ -1,6 +1,6 @@
 {
   "name": "more-linked-issues-action",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Link pull requests to issues via commit messages and titles",
   "main": "dist/index.js",
