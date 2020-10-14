@@ -3,12 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "description": "Link pull requests to issues via commit messages and titles",
-  "main": "src/index.js",
+  "main": "dist/index.js",
   "scripts": {
     "posttest": "markdownlint \"*.md\" && eslint .",
     "test": "nyc mocha \"test/**/*.spec.js\"",
-    "release": "standard-version"
+    "build": "ncc build src/index.js --license licenses.txt",
+    "prepublishOnly": "npm run build",
+    "release": "standard-version -a"
   },
+  "files": [
+    "dist",
+    "src"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/boneskull/more-linked-issues-action"
@@ -21,11 +27,11 @@
   },
   "dependencies": {
     "@actions/core": "^1.2.6",
-    "@actions/github": "^4.0.0",
-    "issue-regex": "^3.1.0"
+    "@actions/github": "^4.0.0"
   },
   "devDependencies": {
     "@octokit/webhooks": "^7.13.0",
+    "@vercel/ncc": "^0.24.1",
     "babel-eslint": "^10.1.0",
     "eslint": "^7.11.0",
     "eslint-config-prettier": "^6.12.0",
