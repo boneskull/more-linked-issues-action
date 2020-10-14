@@ -8,13 +8,9 @@
     "posttest": "markdownlint \"*.md\" && eslint .",
     "test": "nyc mocha \"test/**/*.spec.js\"",
     "build": "ncc build src/index.js --license licenses.txt",
-    "prepublishOnly": "npm run build",
+    "postinstall": "npm run build",
     "release": "standard-version -a"
   },
-  "files": [
-    "dist",
-    "src"
-  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/boneskull/more-linked-issues-action"
