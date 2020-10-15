@@ -72,7 +72,7 @@ jobs:
     name: Link issues found in PR title and commit message(s)
     steps:
       - id: link-issues
-        uses: boneskull/more-linked-issues-action@master
+        uses: boneskull/more-linked-issues-action@v0.2.0
         with:
           github-token: '${{ secrets.GITHUB_TOKEN }}'
     # you likely won't need the output for anything, but here it is.
