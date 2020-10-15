@@ -5796,8 +5796,9 @@ function wrappy (fn, cb) {
 /* eslint-disable camelcase */
 const core = __webpack_require__(186);
 const github = __webpack_require__(438);
+const {name, homepage} = __webpack_require__(306);
 
-const RESOLVED_KEYWORDS = [
+const DEFAULT_RESOLVED_KEYWORDS = [
   'close',
   'closes',
   'closed',
@@ -5807,12 +5808,34 @@ const RESOLVED_KEYWORDS = [
   'resolve',
   'resolves',
   'resolved',
-];
-const RESOLVED_KEYWORDS_FOR_REGEX = RESOLVED_KEYWORDS.join('|');
-const RESOLVED_LINK_REGEX = new RegExp(
-  `(?<=(?:${RESOLVED_KEYWORDS_FOR_REGEX})\\s+)(?:(?<![/\\w-.])(?<repo>\\w[\\w-.]+\\/\\w[\\w-.]+|\\B)#(?<issue>[1-9]\\d*))\\b`,
-  'gi'
+].join(',');
+
+const TRUE = 'true';
+const FALSE = 'false';
+const BODY_TOKEN_HEADER = `<!-- BEGIN ${name} -->`;
+const BODY_TOKEN_FOOTER = `<!-- END ${name} -->`;
+
+const BODY_TOKEN_REGEX = new RegExp(
+  `${BODY_TOKEN_HEADER}[\\s\\S]*?${BODY_TOKEN_FOOTER}`,
+  'g'
 );
+
+const ALLOWED_EVENTS = new Set(['pull_request']);
+
+const LINK_TOKEN = 'resolves';
+
+const OUTPUT_LINKS = 'links';
+
+/**
+ * @param {string} str
+ */
+const capitalize = (str) => str.charAt(0).toUpperCase() + str.slice(1);
+
+/**
+ * @param {number} pullNumber
+ * @param {string} url
+ */
+const toPRString = (pullNumber, url) => `PR #${pullNumber} (${url})`;
 
 /**
  *
@@ -5821,61 +5844,154 @@ const RESOLVED_LINK_REGEX = new RegExp(
  */
 async function main(
   token,
-  {useCommitMessage = 'true', usePRTitle = 'true'} = {}
+  {
+    useCommitMessage = TRUE,
+    usePRTitle = TRUE,
+    keywords = DEFAULT_RESOLVED_KEYWORDS,
+  } = {}
 ) {
   try {
-    const shouldUseCommitMessage = useCommitMessage.toLowerCase() !== 'false';
-    // const shouldUsePRTitle = usePRTitle.toLowerCase() !== 'false';
+    if (ALLOWED_EVENTS.has(github.context.eventName)) {
+      const cleanKeywords = keywords
+        .split(',')
+        .map((str) => str.trim().replace(/\W/g, ''));
+      const resolvedLinksRegex = new RegExp(
+        `(?<=(?:${cleanKeywords.join(
+          '|'
+        )})\\s+)(?:(?<![/\\w-.])(?<repo>\\w[\\w-.]+\\/\\w[\\w-.]+|\\B)#(?<issue>[1-9]\\d*))\\b`,
+        'gi'
+      );
 
-    const linkedIssues = new Set();
-    if (github.context.eventName === 'pull_request') {
+      const shouldUseCommitMessage = useCommitMessage.toLowerCase() !== FALSE;
+      const shouldUsePRTitle = usePRTitle.toLowerCase() !== FALSE;
+      const linkedIssues = new Set();
+      const octokit = github.getOctokit(token);
+
+      const payload = /**
+       * @type {import('@octokit/webhooks').EventPayloads.WebhookPayloadPullRequest}
+       */ (github.context.payload);
+
+      const pullNumber = payload.pull_request.number;
+
+      // get pull request description
+      let {body, title, url} = (
+        await octokit.pulls.get({
+          ...github.context.repo,
+          pull_number: pullNumber,
+        })
+      ).data;
+
+      const prString = toPRString(pullNumber, url);
+
       if (shouldUseCommitMessage) {
-        const payload = /**
-         * @type {import('@octokit/webhooks').EventPayloads.WebhookPayloadPullRequest}
-         */ (github.context.payload);
-        const {sha: commit_sha} = payload.pull_request.head;
-        const octokit = github.getOctokit(token);
-        const {message} = (
-          await octokit.git.getCommit({
-            commit_sha,
-            ...github.context.repo,
-          })
-        ).data;
+        // get all commits for this pr
+        const commits = await octokit.paginate(octokit.pulls.listCommits, {
+          ...github.context.repo,
+          pull_number: pullNumber,
+        });
 
-        [...message.matchAll(RESOLVED_LINK_REGEX)]
-          .map((match) => match.groups || {})
-          .forEach((match) => {
-            linkedIssues.add(match);
+        commits.forEach(({commit, sha, url}) => {
+          const {message} = commit;
+          [...message.matchAll(resolvedLinksRegex)]
+            .map(({groups = {}}) => {
+              const {repo, issue} = groups;
+              return repo ? `${repo}#${issue}` : `#${issue}`;
+            })
+            .forEach((ref) => {
+              linkedIssues.add(ref);
+              core.info(
+                `found linked issue in ${prString} commit ${sha} (${url}) message: ${ref}`
+              );
+            });
+        });
+      }
+
+      if (shouldUsePRTitle) {
+        [...title.matchAll(resolvedLinksRegex)]
+          .map(({groups = {}}) => {
+            const {repo, issue} = groups;
+            return repo ? `${repo}#${issue}` : `#${issue}`;
+          })
+          .filter((ref) => {
+            if (linkedIssues.has(ref)) {
+              core.info(`linked issue in ${prString} already found: ${ref}`);
+              return false;
+            }
+            return true;
+          })
+          .forEach((ref) => {
+            linkedIssues.add(ref);
+            core.info(
+              `found linked issue in ${prString} title "${title}": ${ref}`
+            );
           });
       }
-    }
 
-    core.setOutput(
-      'links',
-      `${[...linkedIssues]
-        .map(({repo, issue}) => (repo ? `${repo}#${issue}` : `#${issue}`))
-        .join(', ')}.`
-    );
+      // remove any existing token
+      body = body.replace(BODY_TOKEN_REGEX, '');
+
+      if (linkedIssues.size) {
+        const references = [...linkedIssues];
+        core.setOutput(OUTPUT_LINKS, references.join(','));
+
+        const linkedReferences = capitalize(
+          references.map((ref) => `${LINK_TOKEN} ${ref}`).join(', ')
+        );
+
+        const now = new Date();
+
+        // append new token to end of PR body
+        body = `${body}
+${BODY_TOKEN_HEADER}
+- - -
+
+&blacktriangleright; _${linkedReferences}_
+
+<sub>updated ${now} by <a href="${homepage}">${name}</a></sub>
+${BODY_TOKEN_FOOTER}
+`;
+        core.info(`updating body of ${prString} with linked issues`);
+      } else {
+        core.info(
+          `removing invalid link(s) from ${prString} body (this will not unlink issues if they are linked elsewhere)`
+        );
+      }
+
+      await octokit.pulls.update({
+        ...github.context.repo,
+        pull_number: pullNumber,
+        body,
+      });
+    } else {
+      core.info(
+        `found unsupported event "${github.context.eventName}", skipping...`
+      );
+      // is this needed?
+      core.setOutput(OUTPUT_LINKS, '');
+    }
+    core.info('more-linked-issues-action complete');
   } catch (err) {
     core.setFailed(err);
+    core.error(err);
+    core.error(err.stack);
   }
 }
 
-if (require.main === require.cache[eval('__filename')]) {
-  main(core.getInput('github-token'), {
-    useCommitMessage: /** @type {MoreGithubActionsOptions["useCommitMessage"]} */ (core.getInput(
-      'use-commit-message'
-    )),
-    usePRTitle: /** @type {MoreGithubActionsOptions["usePRTitle"]} */ (core.getInput(
-      'use-pr-title'
-    )),
-  });
-}
+core.info('more-linked-issues-action starting');
+main(core.getInput('github-token'), {
+  useCommitMessage: /** @type {MoreGithubActionsOptions["useCommitMessage"]} */ (core.getInput(
+    'use-commit-message'
+  )),
+  usePRTitle: /** @type {MoreGithubActionsOptions["usePRTitle"]} */ (core.getInput(
+    'use-pr-title'
+  )),
+});
 
 /**
  * @typedef {Object} MoreGithubActionsOptions
  * @property {"true"|"false"} useCommitMessage - If 'false', do not use linking keywords in commit messages
  * @property {"true"|"false"} usePRTitle - If 'false', do not use linking keywords in PR titles
+ * @property {string} keywords - Comma-delimited list of keywords to recognize to establish links. Jeyword must precede an issue reference, followed by a space
  */
 
 
@@ -5886,6 +6002,14 @@ if (require.main === require.cache[eval('__filename')]) {
 
 module.exports = eval("require")("encoding");
 
+
+/***/ }),
+
+/***/ 306:
+/***/ ((module) => {
+
+"use strict";
+module.exports = JSON.parse("{\"name\":\"more-linked-issues-action\",\"version\":\"0.1.1\",\"private\":true,\"description\":\"Link pull requests to issues via commit messages and titles\",\"main\":\"dist/index.js\",\"scripts\":{\"posttest\":\"markdownlint \\\"*.md\\\" && eslint .\",\"test\":\"nyc mocha \\\"test/**/*.spec.js\\\"\",\"build\":\"ncc build src/index.js --license licenses.txt\",\"postinstall\":\"npm run build\",\"release\":\"standard-version -a\"},\"repository\":{\"type\":\"git\",\"url\":\"https://github.com/boneskull/more-linked-issues-action\"},\"keywords\":[],\"author\":\"Christopher Hiller <boneskull@boneskull.com> (https://boneskull.com/)\",\"license\":\"Apache-2.0\",\"engines\":{\"node\":\">=12\"},\"dependencies\":{\"@actions/core\":\"^1.2.6\",\"@actions/github\":\"^4.0.0\"},\"devDependencies\":{\"@octokit/webhooks\":\"^7.13.0\",\"@vercel/ncc\":\"^0.24.1\",\"babel-eslint\":\"^10.1.0\",\"eslint\":\"^7.11.0\",\"eslint-config-prettier\":\"^6.12.0\",\"eslint-config-semistandard\":\"^15.0.1\",\"eslint-config-standard\":\"^14.1.1\",\"eslint-plugin-import\":\"^2.22.1\",\"eslint-plugin-node\":\"^11.1.0\",\"eslint-plugin-prettier\":\"^3.1.4\",\"eslint-plugin-promise\":\"^4.2.1\",\"eslint-plugin-standard\":\"^4.0.1\",\"husky\":\"^4.3.0\",\"lint-staged\":\"^10.4.0\",\"markdownlint-cli\":\"^0.24.0\",\"mocha\":\"^8.1.3\",\"nyc\":\"^15.1.0\",\"prettier\":\"^2.1.2\",\"sinon\":\"^9.2.0\",\"standard-version\":\"^9.0.0\",\"unexpected\":\"^11.15.0\",\"unexpected-sinon\":\"^10.11.2\"},\"husky\":{\"hooks\":{\"pre-commit\":\"npm run build && git add dist && lint-staged\"}},\"lint-staged\":{\"!(*dist/)*.js\":[\"eslint --fix\"],\"*.{yml,md}\":[\"prettier --write\"]},\"prettier\":{\"singleQuote\":true,\"bracketSpacing\":false,\"endOfLine\":\"auto\"},\"homepage\":\"https://github.com/boneskull/more-linked-issues-action\"}");
 
 /***/ }),
 

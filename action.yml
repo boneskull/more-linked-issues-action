@@ -18,7 +18,7 @@ inputs:
     required: true
 outputs:
   links:
-    description: 'Linked issue text'
+    description: 'Comma-separated list of linked issues'
 runs:
   using: 'node12'
-  main: 'src/index.js'
+  main: 'dist/index.js'

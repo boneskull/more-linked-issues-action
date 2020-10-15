@@ -51,11 +51,11 @@
   },
   "husky": {
     "hooks": {
-      "pre-commit": "lint-staged"
+      "pre-commit": "npm run build && git add dist && lint-staged"
     }
   },
   "lint-staged": {
-    "*.js": [
+    "!(*dist/)*.js": [
       "eslint --fix"
     ],
     "*.{yml,md}": [
@@ -66,5 +66,6 @@
     "singleQuote": true,
     "bracketSpacing": false,
     "endOfLine": "auto"
-  }
+  },
+  "homepage": "https://github.com/boneskull/more-linked-issues-action"
 }
